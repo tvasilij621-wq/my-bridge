@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Наш Мост</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #87ceeb; }
+        #msg { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.5); color: white; padding: 10px; border-radius: 5px; pointer-events: none; }
+    </style>
+</head>
+<body>
+    <div id="msg">Кликни по экрану, чтобы ходить (WASD + Мышь)</div>
+    <script src="/socket.io/socket.io.js"></script>
+    <script type="importmap">
+        { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js", "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/" } }
+    </script>
+    <script type="module">
+        import * as THREE from 'three';
+        import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
+
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x87ceeb);
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        const light = new THREE.HemisphereLight(0xffffff, 0x444444, 1.5);
+        scene.add(light);
+
+        // Земля и река
+        const ground = new THREE.Mesh(new THREE.PlaneGeometry(100, 100), new THREE.MeshLambertMaterial({color: 0x3d5e3a}));
+        ground.rotation.x = -Math.PI/2;
+        scene.add(ground);
+
+        const river = new THREE.Mesh(new THREE.PlaneGeometry(15, 100), new THREE.MeshLambertMaterial({color: 0x1e90ff}));
+        river.rotation.x = -Math.PI/2; river.position.y = 0.01;
+        scene.add(river);
+
+        // Мост
+        const bridge = new THREE.Mesh(new THREE.BoxGeometry(20, 0.5, 5), new THREE.MeshLambertMaterial({color: 0x5c4033}));
+        bridge.position.y = 1; scene.add(bridge);
+
+        const socket = io();
+        const controls = new PointerLockControls(camera, document.body);
+        document.addEventListener('click', () => controls.lock());
+
+        const otherPlayers = {};
+        function createAvatar(info) {
+            const group = new THREE.Group();
+            const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.3, 1), new THREE.MeshLambertMaterial({color: info.color}));
+            body.position.y = 0.8; group.add(body);
+            return group;
+        }
+
+        socket.on('currentPlayers', (players) => {
+            Object.keys(players).forEach(id => {
+                if(id !== socket.id) otherPlayers[id] = createAvatar(players[id]);
+                if(otherPlayers[id]) scene.add(otherPlayers[id]);
+            });
+        });
+
+        socket.on('newPlayer', (data) => {
+            otherPlayers[data.id] = createAvatar(data.info);
+            scene.add(otherPlayers[data.id]);
+        });
+
+        socket.on('playerMoved', (data) => {
+            if(otherPlayers[data.id]) otherPlayers[data.id].position.set(data.info.x, data.info.y, data.info.z);
+        });
+
+        socket.on('playerDisconnected', (id) => {
+            if(otherPlayers[id]) { scene.remove(otherPlayers[id]); delete otherPlayers[id]; }
+        });
+
+        let moveF = false, moveB = false, moveL = false, moveR = false;
+        document.addEventListener('keydown', (e) => { if(e.code==='KeyW') moveF=true; if(e.code==='KeyS') moveB=true; if(e.code==='KeyA') moveL=true; if(e.code==='KeyD') moveR=true; });
+        document.addEventListener('keyup', (e) => { if(e.code==='KeyW') moveF=false; if(e.code==='KeyS') moveB=false; if(e.code==='KeyA') moveL=false; if(e.code==='KeyD') moveR=false; });
+
+        const vel = new THREE.Vector3();
+        function animate() {
+            requestAnimationFrame(animate);
+            if(controls.isLocked) {
+                vel.set(0,0,0);
+                if(moveF) controls.moveForward(0.1); if(moveB) controls.moveForward(-0.1);
+                if(moveL) controls.moveRight(-0.1); if(moveR) controls.moveRight(0.1);
+                socket.emit('playerMovement', { x: camera.position.x, y: camera.position.y, z: camera.position.z });
+            }
+            renderer.render(scene, camera);
+        }
+        animate();
+    </script>
+</body>
+</html>
