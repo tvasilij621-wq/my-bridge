@@ -1,7 +1,7 @@
 {
-  "name": "bridge-simulation",
-  "version": "1.2.0",
-  "description": "AAA Multiplayer Bridge Experience",
+  "name": "bridge-aaa-edition",
+  "version": "1.3.0",
+  "description": "Multiplayer Cyber Bridge",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
