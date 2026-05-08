@@ -2,25 +2,37 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>The Bridge VR | Next-Gen</title>
+    <title>THE BRIDGE :: MULTIPLAYER SIMULATION v1.2</title>
     <style>
-        body { margin: 0; overflow: hidden; background: #000; font-family: 'Orbitron', sans-serif; }
+        body { margin: 0; overflow: hidden; background: #000; font-family: 'Courier New', monospace; color: #00f2ff; }
         #instructions {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             display: flex; flex-direction: column; justify-content: center; align-items: center;
-            background: rgba(0,0,0,0.9); color: #00f2ff; z-index: 100; cursor: pointer;
-            transition: 0.5s; text-transform: uppercase; letter-spacing: 5px;
+            background: rgba(0,2,10,0.95); z-index: 100; cursor: pointer; text-align: center;
+            transition: 0.5s; text-transform: uppercase; letter-spacing: 3px;
         }
-        #ui { position: absolute; top: 20px; left: 20px; color: #00f2ff; font-size: 12px; pointer-events: none; z-index: 10; }
+        #ui { position: absolute; top: 20px; left: 20px; font-size: 12px; pointer-events: none; z-index: 10; text-shadow: 0 0 5px #00f2ff; }
+        
+        /* Стили для ЧАТА */
+        #chat-box { position: absolute; bottom: 20px; left: 20px; width: 300px; height: 200px; background: rgba(0,0,0,0.7); border: 1px solid #00f2ff; border-radius: 5px; z-index: 50; display: none; flex-direction: column; }
+        #chat-messages { flex: 1; overflow-y: auto; padding: 10px; font-size: 12px; }
+        #chat-input { background: none; border: none; border-top: 1px solid #00f2ff; color: #00f2ff; padding: 10px; font-family: inherit; outline: none; }
     </style>
-    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&display=swap" rel="stylesheet">
 </head>
 <body>
     <div id="instructions">
-        <h1 style="font-size: 3em; margin-bottom: 10px;">The Bridge</h1>
-        <p>Нажми, чтобы войти в симуляцию</p>
+        <div style="border: 2px solid #00f2ff; padding: 40px; border-radius: 10px; box-shadow: 0 0 30px rgba(0,242,255,0.3);">
+            <h1 style="font-size: 3em; margin: 0 0 10px 0; text-shadow: 0 0 10px #00f2ff;">The Bridge</h1>
+            <p>Нажми для инициализации</p>
+            <p style="font-size: 0.8em; color: #555; letter-spacing: 1px;">WASD - Ходить, T - Чат, Мышь - Обзор</p>
+        </div>
     </div>
-    <div id="ui">SYSTEM: ONLINE | MULTIPLAYER: ACTIVE</div>
+    <div id="ui">SIMULATION: <span style="color:#fff;">ONLINE</span> | CONNECTED: <span id="player-count">1</span></div>
+
+    <div id="chat-box">
+        <div id="chat-messages"></div>
+        <input type="text" id="chat-input" placeholder="Нажми Enter, чтобы отправить...">
+    </div>
 
     <script src="/socket.io/socket.io.js"></script>
     <script type="importmap">
@@ -34,113 +46,185 @@
         import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
         import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 
-        // --- Инициализация ---
+        let nickname = localStorage.getItem('most_nickname') || 'Ghost_' + Math.floor(Math.random()*100);
+
+        // --- Инициализация и Режимы ---
         const scene = new THREE.Scene();
-        scene.fog = new THREE.FogExp2(0x020205, 0.02);
+        scene.fog = new THREE.FogExp2(0x00020a, 0.015); // Глубокий космический туман
         
-        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 1000);
         const renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
         renderer.toneMapping = THREE.ReinhardToneMapping;
+        renderer.setPixelRatio(window.devicePixelRatio);
         document.body.appendChild(renderer.domElement);
 
-        // --- Постобработка (Тот самый AAA-эффект свечения) ---
-        const renderScene = new RenderPass(scene, camera);
-        const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.5, 0.4, 0.85);
-        bloomPass.threshold = 0.2;
-        bloomPass.strength = 1.2;
-        bloomPass.radius = 0.5;
-
+        // --- AAA Постобработка (Bloom) ---
         const composer = new EffectComposer(renderer);
-        composer.addPass(renderScene);
+        composer.addPass(new RenderPass(scene, camera));
+        const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.5, 0.4, 0.85);
+        bloomPass.threshold = 0.2; bloomPass.strength = 1.4; bloomPass.radius = 0.6;
         composer.addPass(bloomPass);
 
-        // --- Окружение ---
-        const ambLight = new THREE.AmbientLight(0x4040ff, 0.2);
+        // --- Свет ---
+        const ambLight = new THREE.AmbientLight(0x0a1030, 0.5); // Синяя ночная подсветка
         scene.add(ambLight);
 
-        // Звездное небо
-        const starGeo = new THREE.BufferGeometry();
-        const starCoords = [];
-        for(let i=0; i<5000; i++) {
-            starCoords.push(Math.random()*1000-500, Math.random()*1000-500, Math.random()*1000-500);
+        // --- ТЕКСТУРЫ ---
+        const textureLoader = new THREE.TextureLoader();
+        // Используем встроенную в Three.js процедурную текстуру для AAA вида без загрузки файлов
+        function createMetalTexture() {
+            const canvas = document.createElement('canvas'); canvas.width = 256; canvas.height = 256;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#111'; ctx.fillRect(0, 0, 256, 256);
+            for(let i=0; i<1000; i++) { ctx.fillStyle = `rgba(255,255,255,${Math.random()*0.1})`; ctx.fillRect(Math.random()*256, Math.random()*256, 2, 2); }
+            const tex = new THREE.CanvasTexture(canvas); tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.repeat.set(10, 10);
+            return tex;
         }
-        starGeo.setAttribute('position', new THREE.Float32BufferAttribute(starCoords, 3));
-        const starMat = new THREE.PointsMaterial({color: 0xffffff, size: 0.7});
-        scene.add(new THREE.Points(starGeo, starMat));
+        const metalTex = createMetalTexture();
 
-        // Вода с отражениями
-        const waterGeo = new THREE.PlaneGeometry(100, 1000);
-        const waterMat = new THREE.MeshStandardMaterial({ 
-            color: 0x000510, metalness: 0.9, roughness: 0.1, transparent: true, opacity: 0.9 
-        });
-        const water = new THREE.Mesh(waterGeo, waterMat);
-        water.rotation.x = -Math.PI/2;
-        scene.add(water);
+        // --- Мир ---
+        // Вода как зеркало
+        const waterMat = new THREE.MeshStandardMaterial({ color: 0x000205, metalness: 1, roughness: 0.1, transparent: true, opacity: 0.8 });
+        const water = new THREE.Mesh(new THREE.PlaneGeometry(200, 1000), waterMat);
+        water.rotation.x = -Math.PI/2; scene.add(water);
 
-        // Улучшенный Мост
+        // --- КРУТОЙ МОСТ ---
         const bridgeGroup = new THREE.Group();
-        const mainMat = new THREE.MeshStandardMaterial({color: 0x111111, metalness: 0.8, roughness: 0.2});
-        const deck = new THREE.Mesh(new THREE.BoxGeometry(12, 0.5, 60), mainMat);
-        deck.position.y = 1.5;
+        // Основной настил с текстурой металла
+        const deckMat = new THREE.MeshStandardMaterial({ color: 0x111111, map: metalTex, metalness: 0.9, roughness: 0.3 });
+        const deck = new THREE.Mesh(new THREE.BoxGeometry(14, 0.6, 100), deckMat);
+        deck.position.y = 1.8;
         bridgeGroup.add(deck);
 
-        // Неоновые перила
-        const createNeonRail = (x, z) => {
-            const rail = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 60), new THREE.MeshBasicMaterial({color: 0x00f2ff}));
-            rail.position.set(x, 2.5, z);
-            bridgeGroup.add(rail);
-            const pLight = new THREE.PointLight(0x00f2ff, 2, 10);
-            pLight.position.set(x, 2.5, 0);
+        // Неоновые светящиеся арки
+        for(let z=-40; z<=40; z+=10) {
+            const archGeo = new THREE.TorusGeometry(8, 0.15, 6, 20, Math.PI);
+            const neonMat = new THREE.MeshBasicMaterial({ color: (z===0 ? 0xff0055 : 0x00f2ff) }); // Центральная арка розовая
+            const arch = new THREE.Mesh(archGeo, neonMat);
+            arch.position.set(0, 2, z);
+            arch.rotation.x = Math.PI/2; arch.rotation.y = Math.PI/2;
+            bridgeGroup.add(arch);
+            
+            // Яркий точечный свет для тумана
+            const pLight = new THREE.PointLight(neonMat.color, 15, 20);
+            pLight.position.set(0, 6, z);
             bridgeGroup.add(pLight);
-        };
-        createNeonRail(5.8, 0);
-        createNeonRail(-5.8, 0);
+        }
         scene.add(bridgeGroup);
 
-        // --- Логика игрока ---
+        // --- Мультиплеер и Аудио ---
         const socket = io();
         const controls = new PointerLockControls(camera, document.body);
+        const otherPlayers = {};
+        const audioLoader = new THREE.AudioLoader();
+        const listener = new THREE.AudioListener();
+        camera.add(listener);
+
         document.getElementById('instructions').addEventListener('click', () => {
             controls.lock();
+            nickname = prompt("Введите ваш ник:", nickname) || nickname;
+            localStorage.setItem('most_nickname', nickname);
+            socket.emit('join-simulation', { nick: nickname });
+            
             document.getElementById('instructions').style.opacity = '0';
             setTimeout(() => document.getElementById('instructions').style.display = 'none', 500);
+            
+            // Запуск Звука
+            const riverSound = new THREE.Audio(listener);
+            audioLoader.load('https://www.soundjay.com/nature/river-1.mp3', (buffer) => {
+                riverSound.setBuffer(buffer); riverSound.setLoop(true); riverSound.setVolume(0.3); riverSound.play();
+            });
         });
 
-        const otherPlayers = {};
+        // Функция создания Аватара и НИКА
         function createAvatar(info) {
             const g = new THREE.Group();
-            const body = new THREE.Mesh(new THREE.BoxGeometry(0.6, 1.4, 0.3), new THREE.MeshStandardMaterial({color: info.color, emissive: info.color, emissiveIntensity: 0.5}));
-            body.position.y = 0.7;
-            const head = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.4, 0.4), new THREE.MeshStandardMaterial({color: 0xffffff}));
-            head.position.y = 1.6;
-            g.add(body); g.add(head);
+            // Тело
+            const bodyMat = new THREE.MeshStandardMaterial({color: info.color, emissive: info.color, emissiveIntensity: 0.5});
+            const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.3, 1), bodyMat);
+            body.position.y = 0.8; g.add(body);
+            
+            // НИКНЕЙМ (через Canvas)
+            const canvas = document.createElement('canvas'); canvas.width = 256; canvas.height = 64;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#fff'; ctx.font = 'Bold 32px Courier New'; ctx.textAlign = 'center';
+            ctx.fillText(info.nick, 128, 48);
+            const textTex = new THREE.CanvasTexture(canvas);
+            const nickPop = new THREE.Sprite(new THREE.SpriteMaterial({map: textTex, transparent: true}));
+            nickPop.position.y = 2.2; nickPop.scale.set(2, 0.5, 1);
+            g.add(nickPop);
+
             return g;
         }
 
-        // --- Основной цикл ---
+        // Обработка данных с сервера
+        socket.on('currentPlayers', (p) => {
+            Object.keys(p).forEach(id => { if(id!==socket.id){ otherPlayers[id]=createAvatar(p[id]); scene.add(otherPlayers[id]); }});
+            document.getElementById('player-count').innerText = Object.keys(p).length;
+        });
+        socket.on('newPlayer', (d) => { 
+            otherPlayers[d.id]=createAvatar(d.info); scene.add(otherPlayers[d.id]);
+            addChatMessage("SYSTEM", `${d.info.nick} вошел в мир`, "#555");
+            document.getElementById('player-count').innerText = parseInt(document.getElementById('player-count').innerText)+1;
+        });
+        socket.on('playerMoved', (d) => { if(otherPlayers[d.id]) otherPlayers[d.id].position.lerp(new THREE.Vector3(d.info.x, d.info.y-1.6, d.info.z), 0.3); });
+        socket.on('playerDisconnected', (id) => { 
+            if(otherPlayers[id]) { 
+                addChatMessage("SYSTEM", `Друг отключился`, "#555");
+                scene.remove(otherPlayers[id]); delete otherPlayers[id]; 
+                document.getElementById('player-count').innerText = parseInt(document.getElementById('player-count').innerText)-1;
+            }
+        });
+
+        // --- ЧАТ Логика ---
+        const chatBox = document.getElementById('chat-box');
+        const chatInput = document.getElementById('chat-input');
+        const chatMessages = document.getElementById('chat-messages');
+        let chatActive = false;
+
+        function addChatMessage(nick, msg, color) {
+            const div = document.createElement('div');
+            div.innerHTML = `<span style="color:${color}; font-weight:bold;">${nick}:</span> ${msg}`;
+            chatMessages.appendChild(div);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        chatInput.addEventListener('keydown', (e) => {
+            if(e.code === 'Enter' && chatInput.value !== '') {
+                socket.emit('chatMessage', chatInput.value);
+                chatInput.value = ''; chatInput.blur(); chatBox.style.display = 'none'; controls.lock(); chatActive = false;
+            }
+        });
+        socket.on('chatMessage', (d) => {
+            if(otherPlayers[d.id] || d.id === socket.id) {
+                const senderNick = d.id === socket.id ? nickname : "Друг"; // Для упрощения, т.к. сервер пока не шлет ники с чатом
+                addChatMessage(senderNick, d.msg, "#00f2ff");
+            }
+        });
+
+        // --- Управление ---
         let keys = {};
-        document.addEventListener('keydown', (e) => keys[e.code] = true);
+        document.addEventListener('keydown', (e) => { 
+            if(e.code === 'KeyT' && !chatActive) { e.preventDefault(); chatActive = true; chatBox.style.display = 'flex'; chatInput.focus(); controls.unlock(); }
+            keys[e.code] = true; 
+        });
         document.addEventListener('keyup', (e) => keys[e.code] = false);
 
-        socket.on('currentPlayers', (p) => Object.keys(p).forEach(id => { if(id!==socket.id){ otherPlayers[id]=createAvatar(p[id]); scene.add(otherPlayers[id]); }}));
-        socket.on('newPlayer', (d) => { otherPlayers[d.id]=createAvatar(d.info); scene.add(otherPlayers[d.id]); });
-        socket.on('playerMoved', (d) => { if(otherPlayers[d.id]) otherPlayers[d.id].position.lerp(new THREE.Vector3(d.info.x, d.info.y-1.6, d.info.z), 0.2); });
-
+        // --- Основной цикл ---
         function animate() {
             requestAnimationFrame(animate);
-            if(controls.isLocked) {
-                if(keys['KeyW']) controls.moveForward(0.2);
-                if(keys['KeyS']) controls.moveForward(-0.2);
-                if(keys['KeyA']) controls.moveRight(-0.2);
-                if(keys['KeyD']) controls.moveRight(0.2);
+            if(controls.isLocked && !chatActive) {
+                if(keys['KeyW']) controls.moveForward(0.2); if(keys['KeyS']) controls.moveForward(-0.2);
+                if(keys['KeyA']) controls.moveRight(-0.2); if(keys['KeyD']) controls.moveRight(0.2);
                 socket.emit('playerMovement', { x: camera.position.x, y: camera.position.y, z: camera.position.z });
             }
-            // Анимация воды
-            water.position.y = Math.sin(Date.now() * 0.001) * 0.1;
+            // Пульсация неоновой реки
+            water.material.opacity = 0.7 + Math.sin(Date.now()*0.002)*0.1;
             composer.render();
         }
         animate();
+        window.addEventListener('resize', () => { camera.aspect = window.innerWidth/window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); });
     </script>
 </body>
 </html>
