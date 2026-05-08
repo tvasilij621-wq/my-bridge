@@ -2,91 +2,143 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>Наш Мост</title>
+    <title>The Bridge VR | Next-Gen</title>
     <style>
-        body { margin: 0; overflow: hidden; background: #87ceeb; }
-        #msg { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.5); color: white; padding: 10px; border-radius: 5px; pointer-events: none; }
+        body { margin: 0; overflow: hidden; background: #000; font-family: 'Orbitron', sans-serif; }
+        #instructions {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            background: rgba(0,0,0,0.9); color: #00f2ff; z-index: 100; cursor: pointer;
+            transition: 0.5s; text-transform: uppercase; letter-spacing: 5px;
+        }
+        #ui { position: absolute; top: 20px; left: 20px; color: #00f2ff; font-size: 12px; pointer-events: none; z-index: 10; }
     </style>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&display=swap" rel="stylesheet">
 </head>
 <body>
-    <div id="msg">Кликни по экрану, чтобы ходить (WASD + Мышь)</div>
+    <div id="instructions">
+        <h1 style="font-size: 3em; margin-bottom: 10px;">The Bridge</h1>
+        <p>Нажми, чтобы войти в симуляцию</p>
+    </div>
+    <div id="ui">SYSTEM: ONLINE | MULTIPLAYER: ACTIVE</div>
+
     <script src="/socket.io/socket.io.js"></script>
     <script type="importmap">
         { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js", "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/" } }
     </script>
+
     <script type="module">
         import * as THREE from 'three';
         import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 
+        // --- Инициализация ---
         const scene = new THREE.Scene();
-        scene.background = new THREE.Color(0x87ceeb);
+        scene.fog = new THREE.FogExp2(0x020205, 0.02);
+        
         const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
         const renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.toneMapping = THREE.ReinhardToneMapping;
         document.body.appendChild(renderer.domElement);
 
-        const light = new THREE.HemisphereLight(0xffffff, 0x444444, 1.5);
-        scene.add(light);
+        // --- Постобработка (Тот самый AAA-эффект свечения) ---
+        const renderScene = new RenderPass(scene, camera);
+        const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.5, 0.4, 0.85);
+        bloomPass.threshold = 0.2;
+        bloomPass.strength = 1.2;
+        bloomPass.radius = 0.5;
 
-        // Земля и река
-        const ground = new THREE.Mesh(new THREE.PlaneGeometry(100, 100), new THREE.MeshLambertMaterial({color: 0x3d5e3a}));
-        ground.rotation.x = -Math.PI/2;
-        scene.add(ground);
+        const composer = new EffectComposer(renderer);
+        composer.addPass(renderScene);
+        composer.addPass(bloomPass);
 
-        const river = new THREE.Mesh(new THREE.PlaneGeometry(15, 100), new THREE.MeshLambertMaterial({color: 0x1e90ff}));
-        river.rotation.x = -Math.PI/2; river.position.y = 0.01;
-        scene.add(river);
+        // --- Окружение ---
+        const ambLight = new THREE.AmbientLight(0x4040ff, 0.2);
+        scene.add(ambLight);
 
-        // Мост
-        const bridge = new THREE.Mesh(new THREE.BoxGeometry(20, 0.5, 5), new THREE.MeshLambertMaterial({color: 0x5c4033}));
-        bridge.position.y = 1; scene.add(bridge);
+        // Звездное небо
+        const starGeo = new THREE.BufferGeometry();
+        const starCoords = [];
+        for(let i=0; i<5000; i++) {
+            starCoords.push(Math.random()*1000-500, Math.random()*1000-500, Math.random()*1000-500);
+        }
+        starGeo.setAttribute('position', new THREE.Float32BufferAttribute(starCoords, 3));
+        const starMat = new THREE.PointsMaterial({color: 0xffffff, size: 0.7});
+        scene.add(new THREE.Points(starGeo, starMat));
 
+        // Вода с отражениями
+        const waterGeo = new THREE.PlaneGeometry(100, 1000);
+        const waterMat = new THREE.MeshStandardMaterial({ 
+            color: 0x000510, metalness: 0.9, roughness: 0.1, transparent: true, opacity: 0.9 
+        });
+        const water = new THREE.Mesh(waterGeo, waterMat);
+        water.rotation.x = -Math.PI/2;
+        scene.add(water);
+
+        // Улучшенный Мост
+        const bridgeGroup = new THREE.Group();
+        const mainMat = new THREE.MeshStandardMaterial({color: 0x111111, metalness: 0.8, roughness: 0.2});
+        const deck = new THREE.Mesh(new THREE.BoxGeometry(12, 0.5, 60), mainMat);
+        deck.position.y = 1.5;
+        bridgeGroup.add(deck);
+
+        // Неоновые перила
+        const createNeonRail = (x, z) => {
+            const rail = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 60), new THREE.MeshBasicMaterial({color: 0x00f2ff}));
+            rail.position.set(x, 2.5, z);
+            bridgeGroup.add(rail);
+            const pLight = new THREE.PointLight(0x00f2ff, 2, 10);
+            pLight.position.set(x, 2.5, 0);
+            bridgeGroup.add(pLight);
+        };
+        createNeonRail(5.8, 0);
+        createNeonRail(-5.8, 0);
+        scene.add(bridgeGroup);
+
+        // --- Логика игрока ---
         const socket = io();
         const controls = new PointerLockControls(camera, document.body);
-        document.addEventListener('click', () => controls.lock());
+        document.getElementById('instructions').addEventListener('click', () => {
+            controls.lock();
+            document.getElementById('instructions').style.opacity = '0';
+            setTimeout(() => document.getElementById('instructions').style.display = 'none', 500);
+        });
 
         const otherPlayers = {};
         function createAvatar(info) {
-            const group = new THREE.Group();
-            const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.3, 1), new THREE.MeshLambertMaterial({color: info.color}));
-            body.position.y = 0.8; group.add(body);
-            return group;
+            const g = new THREE.Group();
+            const body = new THREE.Mesh(new THREE.BoxGeometry(0.6, 1.4, 0.3), new THREE.MeshStandardMaterial({color: info.color, emissive: info.color, emissiveIntensity: 0.5}));
+            body.position.y = 0.7;
+            const head = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.4, 0.4), new THREE.MeshStandardMaterial({color: 0xffffff}));
+            head.position.y = 1.6;
+            g.add(body); g.add(head);
+            return g;
         }
 
-        socket.on('currentPlayers', (players) => {
-            Object.keys(players).forEach(id => {
-                if(id !== socket.id) otherPlayers[id] = createAvatar(players[id]);
-                if(otherPlayers[id]) scene.add(otherPlayers[id]);
-            });
-        });
+        // --- Основной цикл ---
+        let keys = {};
+        document.addEventListener('keydown', (e) => keys[e.code] = true);
+        document.addEventListener('keyup', (e) => keys[e.code] = false);
 
-        socket.on('newPlayer', (data) => {
-            otherPlayers[data.id] = createAvatar(data.info);
-            scene.add(otherPlayers[data.id]);
-        });
+        socket.on('currentPlayers', (p) => Object.keys(p).forEach(id => { if(id!==socket.id){ otherPlayers[id]=createAvatar(p[id]); scene.add(otherPlayers[id]); }}));
+        socket.on('newPlayer', (d) => { otherPlayers[d.id]=createAvatar(d.info); scene.add(otherPlayers[d.id]); });
+        socket.on('playerMoved', (d) => { if(otherPlayers[d.id]) otherPlayers[d.id].position.lerp(new THREE.Vector3(d.info.x, d.info.y-1.6, d.info.z), 0.2); });
 
-        socket.on('playerMoved', (data) => {
-            if(otherPlayers[data.id]) otherPlayers[data.id].position.set(data.info.x, data.info.y, data.info.z);
-        });
-
-        socket.on('playerDisconnected', (id) => {
-            if(otherPlayers[id]) { scene.remove(otherPlayers[id]); delete otherPlayers[id]; }
-        });
-
-        let moveF = false, moveB = false, moveL = false, moveR = false;
-        document.addEventListener('keydown', (e) => { if(e.code==='KeyW') moveF=true; if(e.code==='KeyS') moveB=true; if(e.code==='KeyA') moveL=true; if(e.code==='KeyD') moveR=true; });
-        document.addEventListener('keyup', (e) => { if(e.code==='KeyW') moveF=false; if(e.code==='KeyS') moveB=false; if(e.code==='KeyA') moveL=false; if(e.code==='KeyD') moveR=false; });
-
-        const vel = new THREE.Vector3();
         function animate() {
             requestAnimationFrame(animate);
             if(controls.isLocked) {
-                vel.set(0,0,0);
-                if(moveF) controls.moveForward(0.1); if(moveB) controls.moveForward(-0.1);
-                if(moveL) controls.moveRight(-0.1); if(moveR) controls.moveRight(0.1);
+                if(keys['KeyW']) controls.moveForward(0.2);
+                if(keys['KeyS']) controls.moveForward(-0.2);
+                if(keys['KeyA']) controls.moveRight(-0.2);
+                if(keys['KeyD']) controls.moveRight(0.2);
                 socket.emit('playerMovement', { x: camera.position.x, y: camera.position.y, z: camera.position.z });
             }
-            renderer.render(scene, camera);
+            // Анимация воды
+            water.position.y = Math.sin(Date.now() * 0.001) * 0.1;
+            composer.render();
         }
         animate();
     </script>
